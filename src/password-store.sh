@@ -578,6 +578,20 @@ cmd_git() {
 	fi
 }
 
+cmd_subcommand() {
+	local maybe_plugin="$PROGRAM-$1"
+	#Trying to find and run $maybe_plugin. Otherwise run 'show' command.
+	which "$maybe_plugin" &>/dev/null && local plugin="$maybe_plugin"
+	if [ $plugin ] ; then
+		shift
+		"$plugin" "$@"
+	else
+		#Unable to find $maybe_plugin.
+		COMMAND="show"
+		cmd_show "$@"
+	fi
+}
+
 #
 # END subcommand functions
 #
@@ -599,6 +613,6 @@ case "$1" in
 	rename|mv) shift;		cmd_copy_move "move" "$@" ;;
 	copy|cp) shift;			cmd_copy_move "copy" "$@" ;;
 	git) shift;			cmd_git "$@" ;;
-	*) COMMAND="show";		cmd_show "$@" ;;
+	*)				cmd_subcommand "$@" ;;
 esac
 exit 0
