@@ -7,8 +7,9 @@ umask "${PASSWORD_STORE_UMASK:-077}"
 set -o pipefail
 
 #(oliver): why is the compression algorithm set to none? This should be at least user definable
-GPG_OPTS=( "--quiet" "--yes" "--compress-algo=none" )
+GPG_OPTS=( "--quiet" "--yes" "--compress-algo=none" "--no-encrypt-to" )
 GPG="gpg"
+export GPG_TTY="${GPG_TTY:-$(tty 2>/dev/null)}"
 which gpg2 &>/dev/null && GPG="gpg2"
 [[ -n $GPG_AGENT_INFO || $GPG == "gpg2" ]] && GPG_OPTS+=( "--batch" "--use-agent" )
 
@@ -109,7 +110,7 @@ reencrypt_path() {
 				IFS=";" eval 'GPG_RECIPIENTS+=( $group )' # http://unix.stackexchange.com/a/92190
 				unset GPG_RECIPIENTS[$index]
 			done
-			gpg_keys="$($GPG --list-keys --keyid-format long "${GPG_RECIPIENTS[@]}" | sed -n 's/sub *.*\/\([A-F0-9]\{16\}\) .*/\1/p' | LC_ALL=C sort -u)"
+			gpg_keys="$($GPG --list-keys --keyid-format long --list-options show-usage "${GPG_RECIPIENTS[@]}" | sed -n 's/sub *.*\/\([A-F0-9]\{16\}\) .*\[[A-Z]\{0,2\}E[A-Z]\{0,2\}\].*/\1/p' | LC_ALL=C sort -u)"
 		fi
 		current_keys="$($GPG -v --no-secmem-warning --no-permission-warning --list-only --keyid-format long "$passfile" 2>&1 | cut -d ' ' -f 5 | LC_ALL=C sort -u)"
 
@@ -138,7 +139,7 @@ check_sneaky_paths() {
 
 clip() {
 	# This base64 business is because bash cannot store binary data in a shell
-	# variable. Specifically, it cannot store nulls nor (non-trivially) store
+	# variable. Specifically, it cannot store nulls nor (non-trivally) store
 	# trailing new lines.
 
 	local sleep_argv0="password store sleep on display $DISPLAY"
@@ -150,7 +151,7 @@ clip() {
 		local now="$(xclip -o -selection "$X_SELECTION" | base64)"
 		[[ $now != $(echo -n "$1" | base64) ]] && before="$now"
 
-		# It might be nice to programmatically check to see if klipper exists,
+		# It might be nice to programatically check to see if klipper exists,
 		# as well as checking for other common clipboard managers. But for now,
 		# this works fine -- if qdbus isn't there or if klipper isn't running,
 		# this essentially becomes a no-op.
@@ -200,7 +201,6 @@ source "$(dirname "$0")/platform/$(uname | cut -d _ -f 1 | tr '[:upper:]' '[:low
 #
 # END platform definable
 #
-
 
 
 #
@@ -334,7 +334,7 @@ cmd_show() {
 		else
 			echo "${path%\/}"
 		fi
-		tree -C -l --noreport "$PREFIX/$path" | tail -n +2 | sed 's/\.gpg$//'
+                tree -C -l --noreport "$PREFIX/$path" | tail -n +2 | sed 's/\.gpg\(\x1B\[[0-9]\+m\)\{0,1\}$/\1/' # remove .gpg at end of line, but keep colors
 	elif [[ -z $path ]]; then
 		die "Error: password store is empty. Try \"pass init\"."
 	else
@@ -433,6 +433,7 @@ cmd_edit() {
 	fi
 	${EDITOR:-vi} "$tmp_file"
 	[[ -f $tmp_file ]] || die "New password not saved."
+	$GPG -d -o - "${GPG_OPTS[@]}" "$passfile" | diff - "$tmp_file" &>/dev/null && die "Password unchanged."
 	while ! $GPG -e "${GPG_RECIPIENT_ARGS[@]}" -o "$passfile" "${GPG_OPTS[@]}" "$tmp_file"; do
 		yesno "GPG encryption failed. Would you like to try again?"
 	done
@@ -580,21 +581,6 @@ cmd_git() {
 	fi
 }
 
-cmd_plugin() {
-	local maybe_plugin="pass-$1"
-	echo "Trying to find and run $maybe_plugin. Otherwise run 'show' command."
-	which "$maybe_plugin" &>/dev/null && local plugin="$maybe_plugin"
-	if [ $plugin ] ; then
-	    echo "Found plugin in $plugin"
-		shift
-		source "$plugin"
-	else
-		echo "Unable to find $maybe_plugin."
-		COMMAND="show"
-		cmd_show "$@"
-	fi
-}
-
 #
 # END subcommand functions
 #
@@ -603,19 +589,19 @@ PROGRAM="${0##*/}"
 COMMAND="$1"
 
 case "$1" in
-	init) shift;				cmd_init "$@" ;;
-	help|--help) shift;			cmd_usage "$@" ;;
+	init) shift;			cmd_init "$@" ;;
+	help|--help) shift;		cmd_usage "$@" ;;
 	version|--version) shift;	cmd_version "$@" ;;
 	show|ls|list) shift;		cmd_show "$@" ;;
-	find|search) shift;			cmd_find "$@" ;;
-	grep) shift;				cmd_grep "$@" ;;
-	insert|add) shift;			cmd_insert "$@" ;;
-	edit) shift;				cmd_edit "$@" ;;
-	generate) shift;			cmd_generate "$@" ;;
+	find|search) shift;		cmd_find "$@" ;;
+	grep) shift;			cmd_grep "$@" ;;
+	insert|add) shift;		cmd_insert "$@" ;;
+	edit) shift;			cmd_edit "$@" ;;
+	generate) shift;		cmd_generate "$@" ;;
 	delete|rm|remove) shift;	cmd_delete "$@" ;;
-	rename|mv) shift;			cmd_copy_move "move" "$@" ;;
-	copy|cp) shift;				cmd_copy_move "copy" "$@" ;;
-	git) shift;					cmd_git "$@" ;;
-	*)							cmd_plugin "$@" ;;
+	rename|mv) shift;		cmd_copy_move "move" "$@" ;;
+	copy|cp) shift;			cmd_copy_move "copy" "$@" ;;
+	git) shift;			cmd_git "$@" ;;
+	*) COMMAND="show";		cmd_show "$@" ;;
 esac
 exit 0
